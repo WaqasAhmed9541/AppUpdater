@@ -1,29 +1,44 @@
-name: Build and Push Docker Image
+# Stage 1: Build the APK
+FROM openjdk:17-jdk-slim AS build-env
 
-on:
-  push:
-    branches:
-      - main
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y wget unzip && \
+    rm -rf /var/lib/apt/lists/*
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+# Set environment variables for Android SDK
+ENV ANDROID_SDK_ROOT=/sdk
+ENV PATH=${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools
 
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+# Download and install Android SDK command line tools
+RUN mkdir -p ${ANDROID_SDK_ROOT} && \
+    wget https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip -O /sdk.zip && \
+    unzip /sdk.zip -d ${ANDROID_SDK_ROOT} && \
+    rm /sdk.zip && \
+    mv ${ANDROID_SDK_ROOT}/cmdline-tools/* ${ANDROID_SDK_ROOT}/cmdline-tools/latest
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3.6.1
+# Accept SDK licenses and install SDK components
+RUN sdkmanager --sdk_root=${ANDROID_SDK_ROOT} --licenses && \
+    sdkmanager --update && \
+    sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
 
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v2
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+# Set working directory
+WORKDIR /app
 
-    - name: Build Docker image
-      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/android-app:latest .
+# Copy project files
+COPY . .
 
-    - name: Push Docker image
-      run: docker push ${{ secrets.DOCKER_USERNAME }}/android-app:latest
+# Build the APK
+RUN ./gradlew assembleDebug
+
+# Stage 2: Package the APK
+FROM openjdk:17-jdk-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy the APK from the build stage
+COPY --from=build-env /app/app/build/outputs/apk/debug/app-debug.apk .
+
+# Define default command
+CMD ["sh", "-c", "echo 'APK built successfully. Use it as needed.'"]
